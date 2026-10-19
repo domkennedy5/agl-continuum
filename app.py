@@ -177,8 +177,8 @@ def sidebar_nav():
             if st.button(label, key=f"snav_{pg}", use_container_width=True):
                 nav(pg)
         st.divider()
-        # Carrier view selector — internal users only, shown on DBR + Delivery Report
-        if role == "internal" and st.session_state.page in ("dbr_dashboard", "delivery_report"):
+        # Carrier view selector — always visible for internal users
+        if role == "internal":
             st.markdown("**View as Carrier**")
             carrier_options = {u: v for u, v in USERS.items() if v["role"] == "carrier"}
             view_labels = ["Internal (All)"] + [f"{v['display']} ({v['scac']})" for v in carrier_options.values()]
@@ -189,9 +189,15 @@ def sidebar_nav():
             new_scac = view_scacs[view_labels.index(sel)]
             if new_scac != st.session_state.view_as_scac:
                 st.session_state.view_as_scac = new_scac
+                # Navigate to delivery report when a carrier is selected
+                if new_scac:
+                    st.session_state.page = "delivery_report"
                 st.rerun()
             if st.session_state.view_as_scac:
                 st.caption(f"Previewing: **{sel}**")
+                if st.button("Back to Internal View", key="back_internal", use_container_width=True):
+                    st.session_state.view_as_scac = None
+                    st.rerun()
             st.divider()
         if st.button("Sign Out", key="signout", use_container_width=True):
             for k in list(DEFAULTS.keys()):
