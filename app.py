@@ -37,7 +37,7 @@ SHEET_CFG = {
 DEFAULTS = {
     "auth": False, "page": "landing", "role": "external",
     "scac": None, "username": None, "display_name": "Guest",
-    "quote_tickets": [], "last_ticket": None, "track_query": "", "view_as_scac": None,
+    "quote_tickets": [], "last_ticket": None, "track_query": "", "view_as_scac": None, "sub_refresh": 0,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -64,6 +64,13 @@ def init_db():
     c.execute("""CREATE TABLE IF NOT EXISTS dbr_upload_log (
         id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT, file_name TEXT,
         sheets_loaded INTEGER, rows_loaded INTEGER, uploaded_at TEXT)""")
+    c.execute("""CREATE TABLE IF NOT EXISTS carrier_submissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        submission_date TEXT, carrier_scac TEXT, container_id TEXT,
+        current_status TEXT, current_bridge TEXT, prior_bridge TEXT,
+        planned_pu_date TEXT, notes TEXT,
+        is_submitted INTEGER DEFAULT 0, submitted_at TEXT,
+        UNIQUE(submission_date, carrier_scac, container_id))""")
     conn.commit(); conn.close()
 
 init_db()
@@ -179,7 +186,7 @@ def sidebar_nav():
         if role == "internal":
             items += [("Dashboard","dashboard"),("DBR Dashboard","dbr_dashboard"),("Delivery Report","delivery_report")]
         else:
-            items += [("Delivery Report","delivery_report")]
+            items = [("Daily Submission","carrier_portal"),("Delivery Report","delivery_report"),("Track & Trace","track"),("Get a Quote","quote")]
         for label, pg in items:
             if st.button(label, key=f"snav_{pg}", use_container_width=True):
                 nav(pg)
@@ -234,7 +241,7 @@ def page_login():
                 st.session_state.role         = USERS[u]["role"]
                 st.session_state.scac         = USERS[u]["scac"]
                 st.session_state.display_name = USERS[u]["display"]
-                st.session_state.page         = "delivery_report" if USERS[u]["role"] == "carrier" else "landing"
+                st.session_state.page         = "carrier_portal" if USERS[u]["role"] == "carrier" else "landing"
                 st.rerun()
             else:
                 st.error("Invalid credentials.")
@@ -500,10 +507,42 @@ def page_dashboard():
             st.markdown("**Delivery Report**"); st.caption("Delivery actuals by container, FC, and carrier.")
             if st.button("Open Delivery Report", key="dash_dr", use_container_width=True): nav("delivery_report")
     with tab_set:
-        st.markdown("### Settings")
-        st.info("User management and configuration coming in v3.0 (post-Amazon server migration).")
+        st.markdown("### Data Architecture")
+        st.markdown('<span style="background:#7a3800;color:#ffd580;padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700;">DEMO MODE — SQLite</span>', unsafe_allow_html=True)
+        st.markdown("##### Current State (Beta)")
+        st.markdown("""
+- **DB:** SQLite — ephemeral on Streamlit Cloud, resets on restart
+- **Data entry:** Manual uploads (DBR Excel, Delivery Report Excel)
+- **Carrier reporting:** Portal UI built; submissions stored in DB
+        """)
+        st.markdown("##### Target State (Amazon Servers)")
+        st.markdown("""
+- **DB:** Amazon RDS (PostgreSQL) — persistent, scalable
+- **DBR pipeline:** `extract_dbr_attachments.py` (already running on QM) extended to push parsed data to S3 → RDS nightly
+- **Delivery Report:** Automated pull from internal WMS/Oracle via Lambda → RDS
+- **Carrier submissions:** Portal replaces email attachments entirely — carriers submit here, data lands in RDS in real time
+- **Reminders:** Scheduled Lambda sends email/SES reminder to carriers at 1 PM MST if not yet submitted
+- **Code change to go live:** Swap `DB_PATH` (SQLite) → `psycopg2` connection string (RDS) — one line
+        """)
+        st.divider()
+        st.markdown("##### Carrier Submission Status — Today")
+        conn = get_conn()
+        today_subs = {}
+        for u,v in USERS.items():
+            if v["role"] == "carrier":
+                sc = v["scac"]
+                total_c   = len(CARRIER_CONTAINERS.get(sc,[]))
+                submitted = conn.execute("SELECT COUNT(*) FROM carrier_submissions WHERE submission_date=? AND carrier_scac=? AND is_submitted=1",(str(_t),sc)).fetchone()[0]
+                today_subs[v["display"]] = {"scac":sc,"submitted":submitted,"total":total_c}
+        conn.close()
+        if today_subs:
+            rows = [{"Carrier":name,"SCAC":d["scac"],"Submitted":d["submitted"],"Total":d["total"],
+                     "Status":"✅ Complete" if d["submitted"]==d["total"] and d["total"]>0 else ("⚠ Partial" if d["submitted"]>0 else "🔴 Not Started")}
+                    for name,d in today_subs.items()]
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.caption("Automated reminder sent at 1 PM MST to carriers with outstanding submissions (production feature).")
+        st.divider()
         st.markdown("**Current admin:** agladmin | **Carriers:** ARVY, ATMI, HRRD, RKNE, TGHE, GBDV")
-        st.markdown("**DB:** SQLite (ephemeral on Streamlit Cloud — swap to RDS on Amazon servers)")
 
 # ── DBR DASHBOARD ──────────────────────────────────────────────────────────────
 def parse_dbr_excel(file_bytes, file_name):
@@ -726,6 +765,238 @@ def page_delivery_report():
                 fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)",font_color="#ccc")
                 st.plotly_chart(fig2,use_container_width=True)
 
+# ── CARRIER PORTAL CONSTANTS ───────────────────────────────────────────────────
+SUBMISSION_DEADLINE_HOUR_UTC = 22  # 3 PM MST = 22:00 UTC
+
+CARRIER_CONTAINERS = {
+    "ARVY": [
+        {"container_id":"MSCU1234567","dest_fc":"RIC6","eta":str(_t+timedelta(1)), "default_status":"Available",            "origin_port":"Norfolk"},
+        {"container_id":"CMAU3345678","dest_fc":"RIC6","eta":str(_t+timedelta(2)), "default_status":"OA - Missing Del Appt","origin_port":"Norfolk"},
+        {"container_id":"FCIU2345678","dest_fc":"RIC6","eta":str(_t+timedelta(9)), "default_status":"In Transit",           "origin_port":"Norfolk"},
+    ],
+    "ATMI": [
+        {"container_id":"TCKU9871234","dest_fc":"LAX9","eta":str(_t+timedelta(14)),"default_status":"On Water",             "origin_port":"Long Beach"},
+        {"container_id":"SUDU8901234","dest_fc":"RIC6","eta":str(_t-timedelta(1)), "default_status":"Demurrage Risk",       "origin_port":"Savannah"},
+    ],
+    "HRRD": [
+        {"container_id":"HLXU8765432","dest_fc":"ILM1","eta":str(_t+timedelta(2)), "default_status":"Delivery Appt Set",   "origin_port":"Wilmington"},
+    ],
+    "RKNE": [
+        {"container_id":"MRKU4456789","dest_fc":"BOS7","eta":str(_t+timedelta(3)), "default_status":"Avail-Pending OA",    "origin_port":"Norfolk"},
+        {"container_id":"PONU4567890","dest_fc":"EWR4","eta":str(_t+timedelta(11)),"default_status":"On Water",            "origin_port":"Newark"},
+    ],
+    "TGHE": [
+        {"container_id":"OOLU6789012","dest_fc":"BOS7","eta":str(_t),              "default_status":"Available",           "origin_port":"Savannah"},
+    ],
+    "GBDV": [
+        {"container_id":"GLVU1122334","dest_fc":"BOS7","eta":str(_t+timedelta(12)),"default_status":"On Water",            "origin_port":"Baltimore"},
+        {"container_id":"GLVU5566778","dest_fc":"EWR4","eta":str(_t+timedelta(1)), "default_status":"Available",           "origin_port":"Newark"},
+    ],
+}
+
+BRIDGE_REQUIRED = {"Avail-Pending OA","OA - Missing Del Appt","Demurrage Risk","Available","Pending OA"}
+
+STATUS_OPTIONS = [
+    "","Available","Avail-Pending OA","OA - Missing Del Appt",
+    "Delivery Appt Set","Completed Pickup","Delivered",
+    "On Water","In Transit","Demurrage Risk","Other"
+]
+
+def get_deadline_info():
+    now = datetime.utcnow()
+    deadline = now.replace(hour=SUBMISSION_DEADLINE_HOUR_UTC, minute=0, second=0, microsecond=0)
+    if now >= deadline:
+        deadline += timedelta(days=1)
+    remaining = deadline - now
+    h = int(remaining.total_seconds() // 3600)
+    m = int((remaining.total_seconds() % 3600) // 60)
+    urgent = remaining.total_seconds() <= 7200  # < 2 hrs
+    return h, m, urgent
+
+def load_carrier_subs(scac, sub_date):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT container_id, current_status, current_bridge, prior_bridge, planned_pu_date, notes, is_submitted FROM carrier_submissions WHERE submission_date=? AND carrier_scac=?",
+        (sub_date, scac)
+    ).fetchall()
+    conn.close()
+    return {r[0]: {"status":r[1],"current_bridge":r[2],"prior_bridge":r[3],
+                   "planned_pu":r[4],"notes":r[5],"submitted":bool(r[6])} for r in rows}
+
+def upsert_submission(scac, sub_date, cid, status, curr_bridge, prior_bridge, planned_pu, notes, submit):
+    conn = get_conn()
+    conn.execute("""INSERT OR REPLACE INTO carrier_submissions
+        (submission_date,carrier_scac,container_id,current_status,current_bridge,prior_bridge,
+         planned_pu_date,notes,is_submitted,submitted_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (sub_date, scac, cid, status, curr_bridge, prior_bridge,
+         str(planned_pu), notes, 1 if submit else 0,
+         datetime.utcnow().isoformat() if submit else None))
+    conn.commit(); conn.close()
+
+# ── CARRIER PORTAL ─────────────────────────────────────────────────────────────
+def page_carrier_portal():
+    sidebar_nav()
+    scac = st.session_state.scac
+    carr_badge()
+    st.title(f"Daily Submission Portal")
+    st.caption(f"{st.session_state.display_name} ({scac}) — submit your container updates by the daily deadline.")
+
+    # Deadline banner
+    h, m, urgent = get_deadline_info()
+    dl_color  = "#c0392b" if urgent else "#e67e22" if h < 3 else "#1a472a"
+    dl_label  = "URGENT — DEADLINE APPROACHING" if urgent else f"{h}h {m}m remaining"
+    st.markdown(f"""<div style='background:{dl_color};border-radius:8px;padding:12px 20px;
+    margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;'>
+      <div>
+        <span style='color:#fff;font-weight:700;font-size:14px;'>Daily Deadline: 3:00 PM MST</span>
+        {"<span style='color:#ffd580;font-size:12px;margin-left:12px;'>⚠ " + dl_label + "</span>" if urgent else ""}
+      </div>
+      <span style='color:#fff;font-size:20px;font-weight:700;'>{dl_label if not urgent else "Submit now"}</span>
+    </div>""", unsafe_allow_html=True)
+
+    tab_sub, tab_hist, tab_dr = st.tabs(["Today's Submission","Submission History","Delivery Report"])
+
+    with tab_sub:
+        today_str  = str(_t)
+        containers = CARRIER_CONTAINERS.get(scac, [])
+        saved      = load_carrier_subs(scac, today_str)
+        submitted_set = {cid for cid, d in saved.items() if d["submitted"]}
+        n_total    = len(containers)
+        n_submitted= len(submitted_set)
+        n_needs_bridge = sum(1 for c in containers if c["default_status"] in BRIDGE_REQUIRED and c["container_id"] not in submitted_set)
+
+        m1,m2,m3,m4 = st.columns(4)
+        m1.metric("Containers Today",  n_total)
+        m2.metric("Submitted",         n_submitted, delta=f"{n_total-n_submitted} remaining")
+        m3.metric("Need Bridge",       n_needs_bridge)
+        m4.metric("Deadline",          "3 PM MST")
+
+        if n_submitted == n_total and n_total > 0:
+            st.success(f"All {n_total} containers submitted for today. Thank you!")
+        else:
+            st.caption("Complete each container below. Containers marked **Bridge Required** need a status explanation before submitting.")
+
+        st.divider()
+
+        for i, cont in enumerate(containers):
+            cid     = cont["container_id"]
+            saved_c = saved.get(cid, {})
+            already = cid in submitted_set
+            needs_b = cont["default_status"] in BRIDGE_REQUIRED
+            def_st  = saved_c.get("status", cont["default_status"])
+
+            icon  = "✅" if already else ("🔴" if needs_b else "🔵")
+            label = f"{icon}  {cid}  |  {cont['dest_fc']}  |  ETA {cont['eta']}  |  {cont['origin_port']}"
+            if already: label += "  — Submitted"
+            elif needs_b: label += "  — Bridge Required"
+
+            with st.expander(label, expanded=(not already and i == 0)):
+                if already:
+                    st.success("Submitted for today.")
+                    sc1,sc2 = st.columns(2)
+                    sc1.markdown(f"**Status:** {saved_c.get('status','—')}")
+                    sc2.markdown(f"**Bridge:** {saved_c.get('current_bridge','—') or 'N/A'}")
+                    if saved_c.get("notes"): st.markdown(f"**Notes:** {saved_c['notes']}")
+                    continue
+
+                cc1,cc2,cc3 = st.columns([2,2,1])
+                with cc1:
+                    idx = STATUS_OPTIONS.index(def_st) if def_st in STATUS_OPTIONS else 0
+                    status = st.selectbox("Status *", STATUS_OPTIONS, index=idx, key=f"st_{scac}_{i}")
+                with cc2:
+                    try:
+                        pu_default = date.fromisoformat(saved_c["planned_pu"]) if saved_c.get("planned_pu") else _t+timedelta(1)
+                    except Exception:
+                        pu_default = _t+timedelta(1)
+                    planned_pu = st.date_input("Planned PU Date", value=pu_default, key=f"pu_{scac}_{i}")
+                with cc3:
+                    st.metric("Dest FC", cont["dest_fc"])
+
+                show_bridge = needs_b or (status in BRIDGE_REQUIRED)
+                if show_bridge:
+                    st.markdown("---")
+                    st.markdown("**🔴 Bridge Required** — provide full context so the AGL team has a complete picture.")
+                    b1,b2 = st.columns(2)
+                    with b1:
+                        prior_bridge = st.text_input(
+                            "Prior Day's Bridge",
+                            value=saved_c.get("prior_bridge",""),
+                            placeholder="What was yesterday's status/hold?",
+                            key=f"prior_{scac}_{i}")
+                    with b2:
+                        curr_bridge = st.text_input(
+                            "Current Bridge *",
+                            value=saved_c.get("current_bridge",""),
+                            placeholder="What is the current hold or issue?",
+                            key=f"curr_{scac}_{i}")
+                    notes = st.text_area(
+                        "Full Context / Notes *",
+                        value=saved_c.get("notes",""),
+                        placeholder="Complete background: timeline of events, contacts made with port/FC/driver, expected resolution date, escalation status if applicable...",
+                        height=110, key=f"notes_{scac}_{i}")
+                    bridge_ok = bool(curr_bridge.strip() and notes.strip())
+                    if not bridge_ok:
+                        st.warning("Current Bridge and Notes are required before submitting.")
+                else:
+                    prior_bridge = curr_bridge = ""
+                    notes = st.text_input("Notes (optional)", value=saved_c.get("notes",""),
+                                          placeholder="Any relevant updates...", key=f"notes_{scac}_{i}")
+                    bridge_ok = True
+
+                ba, bb = st.columns([2,1])
+                with ba:
+                    if st.button(f"Save Draft", key=f"draft_{scac}_{i}", use_container_width=True):
+                        upsert_submission(scac, today_str, cid, status, curr_bridge, prior_bridge, planned_pu, notes, False)
+                        st.success("Draft saved.")
+                with bb:
+                    sub_disabled = not bridge_ok
+                    if st.button(f"Submit ✓", key=f"sub_{scac}_{i}", type="primary", use_container_width=True, disabled=sub_disabled):
+                        upsert_submission(scac, today_str, cid, status, curr_bridge, prior_bridge, planned_pu, notes, True)
+                        st.rerun()
+
+        st.divider()
+        if n_submitted < n_total:
+            if st.button("Submit All Remaining (no bridge required)", key="sub_all", use_container_width=True):
+                for cont in containers:
+                    cid = cont["container_id"]
+                    if cid not in submitted_set and cont["default_status"] not in BRIDGE_REQUIRED:
+                        upsert_submission(scac, today_str, cid,
+                                          saved.get(cid,{}).get("status", cont["default_status"]),
+                                          "","",_t+timedelta(1),"",True)
+                st.rerun()
+
+    with tab_hist:
+        conn = get_conn()
+        hist = pd.read_sql_query(
+            "SELECT submission_date, container_id, current_status, current_bridge, notes, is_submitted, submitted_at FROM carrier_submissions WHERE carrier_scac=? ORDER BY submission_date DESC, submitted_at DESC LIMIT 100",
+            conn, params=(scac,))
+        conn.close()
+        if hist.empty:
+            hist = pd.DataFrame([
+                {"submission_date":str(_t-timedelta(1)),"container_id":"HLXU8765432","current_status":"Delivery Appt Set","current_bridge":"","notes":"Confirmed appt at ILM1 07:30","is_submitted":1,"submitted_at":str(_t-timedelta(1))+" 19:45 UTC"},
+                {"submission_date":str(_t-timedelta(2)),"container_id":"HLXU8765432","current_status":"Completed Pickup","current_bridge":"","notes":"Picked up at Wilmington port","is_submitted":1,"submitted_at":str(_t-timedelta(2))+" 20:12 UTC"},
+            ])
+            st.caption("Demo history — live submissions will appear here.")
+        hist["Submitted"] = hist["is_submitted"].map({1:"Yes",0:"Draft"})
+        st.dataframe(hist.drop(columns=["is_submitted"],errors="ignore"), use_container_width=True, hide_index=True, height=320)
+
+    with tab_dr:
+        df = load_delivery_report(scac)
+        if df.empty:
+            df = MOCK_DELIVERY_DF[MOCK_DELIVERY_DF["carrier"]==scac].copy()
+        st.metric("Delivery Records", len(df))
+        if not df.empty:
+            st.dataframe(df, use_container_width=True, hide_index=True, height=340)
+            buf = BytesIO(); df.to_excel(buf, index=False, engine="openpyxl")
+            st.download_button("Export", data=buf.getvalue(),
+                file_name=f"delivery_report_{scac}_{date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="cp_dr_exp")
+        else:
+            st.info("No delivery records on file.")
+
+
+
 # ── ROUTER ─────────────────────────────────────────────────────────────────────
 if not st.session_state.auth:
     page_login()
@@ -738,4 +1009,5 @@ else:
     elif pg == "dashboard":       page_dashboard()
     elif pg == "dbr_dashboard":   page_dbr_dashboard()
     elif pg == "delivery_report": page_delivery_report()
+    elif pg == "carrier_portal":   page_carrier_portal()
     else:                         page_landing()
