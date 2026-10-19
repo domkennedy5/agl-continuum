@@ -201,40 +201,35 @@ def sidebar_nav():
 
 # ── LOGIN ──────────────────────────────────────────────────────────────────────
 def page_login():
-    st.markdown("""
-    <style>
-    .block-container{padding:0!important;max-width:100%!important;}
-    </style>
-    <div style='background:#0B1623;min-height:100vh;display:flex;flex-direction:column;
-    align-items:center;justify-content:center;padding:40px;font-family:Segoe UI,sans-serif;'>
-      <div style='max-width:460px;width:100%;'>
-        <div style='text-align:center;margin-bottom:40px;'>
-          <div style='font-size:52px;margin-bottom:12px;'>&#x1F310;</div>
-          <h1 style='color:#fff;font-size:34px;font-weight:700;margin:0;letter-spacing:-0.5px;'>Continuum</h1>
-          <p style='color:#8899AA;font-size:15px;margin-top:8px;'>Amazon Global Logistics</p>
+    # Centre content using columns
+    _, mid, _ = st.columns([1, 2, 1])
+    with mid:
+        st.markdown("""
+        <div style='text-align:center;padding:40px 0 24px;'>
+          <div style='font-size:52px;'>&#x1F310;</div>
+          <h1 style='font-size:32px;font-weight:700;margin:8px 0 4px;'>Continuum</h1>
+          <p style='color:#8899AA;font-size:15px;margin:0;'>Amazon Global Logistics</p>
         </div>
-        <div style='background:#132133;border:1px solid #1E3A52;border-radius:12px;padding:32px;'>
-          <p style='color:#ccc;font-size:14px;margin-bottom:20px;'>Sign in to continue.</p>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
 
-    username = st.text_input("Username", placeholder="Username", key="li_user")
-    password = st.text_input("Password", type="password", placeholder="Password", key="li_pass")
-    btn = st.button("Sign In", use_container_width=True, type="primary", key="li_btn")
+        with st.container(border=True):
+            st.markdown("##### Sign in to continue")
+            username = st.text_input("Username", placeholder="Username", key="li_user")
+            password = st.text_input("Password", type="password", placeholder="Password", key="li_pass")
+            btn = st.button("Sign In", use_container_width=True, type="primary", key="li_btn")
 
-    if btn:
-        u = username.strip().lower()
-        if u in USERS and USERS[u]["password"] == password:
-            st.session_state.auth = True
-            st.session_state.username = u
-            st.session_state.role = USERS[u]["role"]
-            st.session_state.scac = USERS[u]["scac"]
-            st.session_state.display_name = USERS[u]["display"]
-            st.session_state.page = "delivery_report" if USERS[u]["role"] == "carrier" else "landing"
-            st.rerun()
-        else:
-            st.error("Invalid credentials.")
-
-    st.markdown("</div></div></div>", unsafe_allow_html=True)
+            if btn:
+                u = username.strip().lower()
+                if u in USERS and USERS[u]["password"] == password:
+                    st.session_state.auth = True
+                    st.session_state.username = u
+                    st.session_state.role = USERS[u]["role"]
+                    st.session_state.scac = USERS[u]["scac"]
+                    st.session_state.display_name = USERS[u]["display"]
+                    st.session_state.page = "delivery_report" if USERS[u]["role"] == "carrier" else "landing"
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials. Check username and password.")
 
 
 # ── DBR DASHBOARD (internal only) ─────────────────────────────────────────────
