@@ -71,6 +71,15 @@ def init_db():
         planned_pu_date TEXT, notes TEXT,
         is_submitted INTEGER DEFAULT 0, submitted_at TEXT,
         UNIQUE(submission_date, carrier_scac, container_id))""")
+    c.execute("""CREATE TABLE IF NOT EXISTS bridge_uploads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        upload_date TEXT, file_name TEXT, sheet_name TEXT,
+        container_id TEXT, gvt_carrier TEXT, final_carrier TEXT,
+        business TEXT, container_status TEXT,
+        eta TEXT, ata TEXT, dem_lfd TEXT, in_dem TEXT,
+        det_lfd TEXT, in_det TEXT, destination TEXT,
+        appt_status TEXT, sla_status TEXT,
+        bridge_gvt TEXT, row_json TEXT)""")
     conn.commit(); conn.close()
 
 init_db()
@@ -184,7 +193,7 @@ def sidebar_nav():
         st.divider()
         items = [("Home","landing"),("Shipments","shipments"),("Track & Trace","track"),("Get a Quote","quote")]
         if role == "internal":
-            items += [("Dashboard","dashboard"),("DBR Dashboard","dbr_dashboard"),("Delivery Report","delivery_report")]
+            items += [("Dashboard","dashboard"),("DBR Dashboard","dbr_dashboard"),("Delivery Report","delivery_report"),("Bridge View","bridge_view")]
         else:
             items = [("Daily Submission","carrier_portal"),("Delivery Report","delivery_report"),("Track & Trace","track"),("Get a Quote","quote")]
         for label, pg in items:
@@ -997,6 +1006,184 @@ def page_carrier_portal():
 
 
 
+
+# ── BRIDGE VIEW (INTERNAL) ──────────────────────────────────────────────────────
+def page_bridge_view():
+    sidebar_nav()
+    int_badge()
+    st.markdown("## 🌉 Daily Bridge View")
+    st.caption("GVT container bridge tracker — upload today's DailyBridges file to overlay carrier-submitted status.")
+
+    if "bridge_data" not in st.session_state:
+        st.session_state.bridge_data = {"port": None, "fc": None, "file_name": None, "upload_time": None}
+
+    col_up, col_meta = st.columns([3, 2])
+    with col_up:
+        uploaded = st.file_uploader("Upload DailyBridges Excel (.xlsx)", type=["xlsx"], key="bridge_file_upload",
+                                    label_visibility="collapsed")
+    with col_meta:
+        if st.session_state.bridge_data["file_name"]:
+            st.success(f"**{st.session_state.bridge_data['file_name']}** loaded at {st.session_state.bridge_data['upload_time']}")
+
+    if uploaded:
+        try:
+            xl = pd.ExcelFile(uploaded)
+            port_df = xl.parse("Port") if "Port" in xl.sheet_names else pd.DataFrame()
+            fc_df   = xl.parse("FC")   if "FC"   in xl.sheet_names else pd.DataFrame()
+            st.session_state.bridge_data = {
+                "port": port_df, "fc": fc_df,
+                "file_name": uploaded.name,
+                "upload_time": datetime.now().strftime("%H:%M UTC"),
+            }
+        except Exception as e:
+            st.error(f"Parse error: {e}"); return
+
+    bd = st.session_state.bridge_data
+    if bd["port"] is None and bd["fc"] is None:
+        st.info("Upload a DailyBridges Excel file exported from GVT. The file must contain 'Port' and 'FC' sheets.", icon="📂")
+        st.markdown("**Expected sheets:**")
+        st.markdown("- **Port** — containers at terminal, pre-gateout (demurrage risk)")
+        st.markdown("- **FC** — containers en route / at FC (detention risk)")
+        return
+
+    # Load carrier-submitted bridges for today
+    conn = get_conn()
+    today_str = str(date.today())
+    subs = pd.read_sql_query(
+        "SELECT container_id, current_bridge, notes, submitted_at FROM carrier_submissions "
+        "WHERE is_submitted=1 AND submission_date=? ORDER BY submitted_at DESC",
+        conn, params=(today_str,))
+    conn.close()
+    # Latest bridge per container
+    sub_bridge = {}
+    if not subs.empty:
+        for _, r in subs.iterrows():
+            if r["container_id"] not in sub_bridge:
+                sub_bridge[r["container_id"]] = r["current_bridge"]
+
+    def prep_sheet(df, sheet):
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.copy()
+        # Normalize container ID
+        cid_col = "Container ID" if "Container ID" in df.columns else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
+        df["_cid"] = df[cid_col].astype(str).str.strip()
+        # Overlay carrier bridge
+        df["Carrier Bridge"] = df["_cid"].map(sub_bridge).fillna("")
+        # Resolve display bridge: prefer carrier submission, fall back to GVT Bridge column
+        bridge_col = "Bridge" if "Bridge" in df.columns else None
+        if bridge_col:
+            df["Bridge Status"] = df.apply(
+                lambda r: r["Carrier Bridge"] if r["Carrier Bridge"] else (r[bridge_col] if pd.notna(r[bridge_col]) else ""), axis=1)
+        else:
+            df["Bridge Status"] = df["Carrier Bridge"]
+        df["Bridge Missing"] = df["Bridge Status"].str.strip() == ""
+        df["Source"] = df["_cid"].apply(lambda c: "Carrier Portal" if sub_bridge.get(c) else ("GVT" if (bridge_col and pd.notna(df.loc[df["_cid"]==c, bridge_col].values[0]) and str(df.loc[df["_cid"]==c, bridge_col].values[0]).strip()) else "⚠️ Missing"))
+        return df
+
+    def show_sheet(df, sheet_type):
+        if df is None or df.empty:
+            st.info(f"No {sheet_type} data in uploaded file."); return
+
+        df = prep_sheet(df, sheet_type)
+
+        # Carrier filter
+        carrier_col = "GVT" if "GVT" in df.columns else None
+        fin_carrier = "Final Carrier" if "Final Carrier" in df.columns else None
+        carriers = []
+        if carrier_col:
+            carriers = sorted(df[carrier_col].dropna().astype(str).unique().tolist())
+        elif fin_carrier:
+            carriers = sorted(df[fin_carrier].dropna().astype(str).unique().tolist())
+
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            sel_carrier = st.selectbox("Filter by Carrier", ["All"] + carriers, key=f"bv_carr_{sheet_type}")
+        with f2:
+            sla_vals = sorted(df["Outside/Within SLA"].dropna().astype(str).unique().tolist()) if "Outside/Within SLA" in df.columns else []
+            sel_sla = st.selectbox("SLA Status", ["All"] + sla_vals, key=f"bv_sla_{sheet_type}")
+        with f3:
+            bridge_filter = st.selectbox("Bridge Status", ["All", "Missing", "Received"], key=f"bv_bfilt_{sheet_type}")
+
+        filtered = df.copy()
+        if sel_carrier != "All":
+            if carrier_col and carrier_col in filtered.columns:
+                filtered = filtered[filtered[carrier_col].astype(str) == sel_carrier]
+            elif fin_carrier and fin_carrier in filtered.columns:
+                filtered = filtered[filtered[fin_carrier].astype(str) == sel_carrier]
+        if sel_sla != "All" and "Outside/Within SLA" in filtered.columns:
+            filtered = filtered[filtered["Outside/Within SLA"].astype(str) == sel_sla]
+        if bridge_filter == "Missing":
+            filtered = filtered[filtered["Bridge Missing"]]
+        elif bridge_filter == "Received":
+            filtered = filtered[~filtered["Bridge Missing"]]
+
+        # Metrics row
+        total = len(filtered)
+        received = int((~filtered["Bridge Missing"]).sum())
+        missing  = int(filtered["Bridge Missing"].sum())
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total Containers", total)
+        m2.metric("Bridges Received", received)
+        m3.metric("Bridges Missing", missing, delta=f"{round(missing/total*100) if total else 0}% open", delta_color="inverse")
+        portal_ct = int((filtered["_cid"].isin(sub_bridge.keys())).sum())
+        m4.metric("Via Carrier Portal", portal_ct)
+
+        # Build display table
+        show_cols_port = ["Container ID","GVT","Final Carrier","Business","Container Status",
+                         "ETA","ATA","av_by_dray","DEM LFD (combo)","In DEM Standard",
+                         "Destination","Appt Status","Outside/Within SLA","Bridge Status","Source"]
+        show_cols_fc   = ["Container ID","GVT","Final Carrier","Business","Container Status",
+                         "ETA","ATA","Terminal Gateout","DET LFD (combo)","In DET",
+                         "Destination","Appt Status","Outside/Within SLA","Bridge Status","Source"]
+        target_cols = show_cols_port if sheet_type == "Port" else show_cols_fc
+        display_cols = [c for c in target_cols if c in filtered.columns]
+        display_df = filtered[display_cols].copy()
+
+        # Rename for readability
+        rename_map = {
+            "DEM LFD (combo)": "DEM LFD", "In DEM Standard": "In DEM",
+            "DET LFD (combo)": "DET LFD", "av_by_dray": "Avail (Dray)",
+            "Terminal Gateout": "Gateout", "Outside/Within SLA": "SLA",
+        }
+        display_df = display_df.rename(columns={k: v for k, v in rename_map.items() if k in display_df.columns})
+
+        # Highlight missing bridges
+        def highlight_missing(row):
+            if row.get("Source","") == "⚠️ Missing":
+                return ["background-color:#3d1a1a"] * len(row)
+            elif row.get("Source","") == "Carrier Portal":
+                return ["background-color:#1a2e1a"] * len(row)
+            return [""] * len(row)
+
+        styled = display_df.style.apply(highlight_missing, axis=1)
+        st.dataframe(styled, use_container_width=True, hide_index=True, height=420)
+
+        # Export
+        buf = BytesIO()
+        display_df.to_excel(buf, index=False, engine="openpyxl")
+        st.download_button(
+            f"Export {sheet_type} View (.xlsx)",
+            data=buf.getvalue(),
+            file_name=f"bridge_{sheet_type.lower()}_{date.today()}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key=f"bv_export_{sheet_type}")
+
+    # Last-upload header
+    if bd["file_name"]:
+        st.markdown(f"**File:** {bd['file_name']} &nbsp;|&nbsp; **Uploaded:** {bd['upload_time']} &nbsp;|&nbsp; **Today:** {today_str}")
+        if sub_bridge:
+            st.success(f"{len(sub_bridge)} carrier bridge(s) received via portal today — overlaid below.", icon="✅")
+        else:
+            st.warning("No carrier bridges submitted via portal today yet.", icon="⚠️")
+
+    tab_port, tab_fc = st.tabs([f"Port ({len(bd['port']) if bd['port'] is not None else 0})", f"FC ({len(bd['fc']) if bd['fc'] is not None else 0})"])
+    with tab_port:
+        show_sheet(bd["port"], "Port")
+    with tab_fc:
+        show_sheet(bd["fc"], "FC")
+
+
 # ── ROUTER ─────────────────────────────────────────────────────────────────────
 if not st.session_state.auth:
     page_login()
@@ -1010,4 +1197,5 @@ else:
     elif pg == "dbr_dashboard":   page_dbr_dashboard()
     elif pg == "delivery_report": page_delivery_report()
     elif pg == "carrier_portal":   page_carrier_portal()
+    elif pg == "bridge_view":      page_bridge_view()
     else:                         page_landing()
