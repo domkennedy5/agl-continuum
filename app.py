@@ -278,7 +278,7 @@ def page_landing():
         st.markdown("#### Recent Activity")
         activity = [
             {"Time":"Today 08:14","Event":"DBR file uploaded","Detail":"GVT Data WK42.xlsx — 8 sheets, 187 rows"},
-            {"Time":"Today 07:30","Event":"Delivery confirmed","Detail":"HLXU8765432 to ILM1 (HUDD)"},
+            {"Time":"Today 07:30","Event":"Delivery confirmed","Detail":"HLXU8765432 to ILM1 (HRRD)"},
             {"Time":"Yesterday","Event":"Demurrage alert","Detail":"SUDU8901234 — 0 free days at Savannah"},
             {"Time":"Yesterday","Event":"Quote request","Detail":"RVR-AGL-20261018-D2C4A — routed to procurement"},
             {"Time":"Oct 17","Event":"New container added","Detail":"PONU4567890 — EWR4 via MSC LORETO"},
@@ -411,7 +411,7 @@ def page_quote():
             st.markdown("#### Routing Preferences")
             c3,c4 = st.columns(2)
             with c3:
-                pref_carriers = st.multiselect("Preferred Carriers", ["ARVY","ATMI","HUDD","RKNE","TGHE","No Preference"], default=["No Preference"])
+                pref_carriers = st.multiselect("Preferred Carriers", ["ARVY","ATMI","HRRD","RKNE","TGHE","GBDV","No Preference"], default=["No Preference"])
                 routing_pref  = st.selectbox("Routing", ["Direct Only","Transshipment OK","No Preference"])
             with c4:
                 priority = st.selectbox("Priority", ["Normal","High","Critical"])
@@ -502,7 +502,7 @@ def page_dashboard():
     with tab_set:
         st.markdown("### Settings")
         st.info("User management and configuration coming in v3.0 (post-Amazon server migration).")
-        st.markdown("**Current admin:** agladmin | **Carriers:** ARVY, ATMI, HUDD, RKNE, TGHE")
+        st.markdown("**Current admin:** agladmin | **Carriers:** ARVY, ATMI, HRRD, RKNE, TGHE, GBDV")
         st.markdown("**DB:** SQLite (ephemeral on Streamlit Cloud — swap to RDS on Amazon servers)")
 
 # ── DBR DASHBOARD ──────────────────────────────────────────────────────────────
