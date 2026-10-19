@@ -193,9 +193,9 @@ def sidebar_nav():
         st.divider()
         items = [("Home","landing"),("Shipments","shipments"),("Track & Trace","track"),("Get a Quote","quote")]
         if role == "internal":
-            items += [("Dashboard","dashboard"),("DBR Dashboard","dbr_dashboard"),("Delivery Report","delivery_report"),("Bridge View","bridge_view")]
+            items += [("Ops Center","ops_center"),("Delivery Report","delivery_report")]
         else:
-            items = [("Daily Submission","carrier_portal"),("Delivery Report","delivery_report"),("Track & Trace","track"),("Get a Quote","quote")]
+            items = [("Daily Submission","carrier_portal"),("Delivery Report","delivery_report"),("Track & Trace","track")]
         for label, pg in items:
             if st.button(label, key=f"snav_{pg}", use_container_width=True):
                 nav(pg)
@@ -277,9 +277,9 @@ def page_landing():
     st.divider()
     c1,c2,c3,c4 = st.columns(4)
     tiles = [("Track & Trace","Real-time container visibility.","track"),
-             ("Get a Quote","Submit a procurement quote request.","quote"),
-             ("Shipments","Manage and monitor active shipments.","shipments"),
-             ("Dashboard","Internal operations overview.","dashboard")]
+             ("Shipments","Browse and filter active container shipments.","shipments"),
+             ("Delivery Report","Delivery actuals by container and carrier.","delivery_report"),
+             ("Ops Center","Daily operations: bridges, DBR, container status.","ops_center")]
     for col,(title,desc,pg) in zip([c1,c2,c3,c4],tiles):
         with col:
             st.markdown(f"""<div style='background:#132133;border:1px solid #1E3A52;border-radius:10px;
@@ -308,40 +308,26 @@ def page_shipments():
         int_badge()
     st.title("Shipments")
     st.caption("Active container shipments — booking, status, and carrier assignments.")
-    tab_all, tab_active, tab_water, tab_done = st.tabs(["All Shipments","Active / Available","On Water","Completed"])
     df = MOCK_SHIPMENTS.copy()
-    with tab_all:
-        c1,c2,c3 = st.columns([2,2,1])
-        with c1:
-            srch = st.text_input("Search", placeholder="Container ID...", key="sh_srch", label_visibility="collapsed")
-        with c2:
-            carr_opts = ["All Carriers"] + sorted(df["Carrier"].unique().tolist())
-            c_sel = st.selectbox("Carrier", carr_opts, key="sh_carr", label_visibility="collapsed")
-        with c3:
-            st.metric("Total", len(df))
-        fdf = df.copy()
-        if srch: fdf = fdf[fdf["Container"].str.contains(srch,case=False,na=False)]
-        if c_sel != "All Carriers": fdf = fdf[fdf["Carrier"]==c_sel]
-        st.dataframe(fdf, use_container_width=True, hide_index=True, height=380)
-    with tab_active:
-        adf = df[df["Status"].isin(["Available","Delivery Appt Set","Pending OA","Demurrage Risk"])]
-        m1,m2,m3 = st.columns(3)
-        m1.metric("Available",      len(adf[adf["Status"]=="Available"]))
-        m2.metric("Appt Set",       len(adf[adf["Status"]=="Delivery Appt Set"]))
-        m3.metric("Demurrage Risk", len(adf[adf["Status"]=="Demurrage Risk"]))
-        st.dataframe(adf, use_container_width=True, hide_index=True, height=320)
-    with tab_water:
-        wdf = df[df["Status"]=="On Water"]
-        st.metric("On Water", len(wdf))
-        st.dataframe(wdf, use_container_width=True, hide_index=True, height=200)
-        fig = px.bar(wdf, x="Dest FC", color="Carrier", title="On-Water Volume by Destination FC",
-                     color_discrete_sequence=px.colors.qualitative.Set2)
-        fig.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font_color="#ccc")
-        st.plotly_chart(fig, use_container_width=True)
-    with tab_done:
-        ddf = df[df["Status"]=="Completed"]
-        st.metric("Completed This Period", len(ddf))
-        st.dataframe(ddf, use_container_width=True, hide_index=True)
+    f1,f2,f3 = st.columns([2,2,2])
+    with f1:
+        srch = st.text_input("Search", placeholder="Container ID...", key="sh_srch", label_visibility="collapsed")
+    with f2:
+        carr_opts = ["All Carriers"] + sorted(df["Carrier"].unique().tolist())
+        c_sel = st.selectbox("Carrier", carr_opts, key="sh_carr", label_visibility="collapsed")
+    with f3:
+        stat_opts = ["All Statuses"] + sorted(df["Status"].unique().tolist())
+        s_sel = st.selectbox("Status", stat_opts, key="sh_stat", label_visibility="collapsed")
+    fdf = df.copy()
+    if srch:        fdf = fdf[fdf["Container"].str.contains(srch,case=False,na=False)]
+    if c_sel != "All Carriers":  fdf = fdf[fdf["Carrier"]==c_sel]
+    if s_sel != "All Statuses":  fdf = fdf[fdf["Status"]==s_sel]
+    m1,m2,m3,m4 = st.columns(4)
+    m1.metric("Showing",           len(fdf))
+    m2.metric("Available / OA",    len(fdf[fdf["Status"].isin(["Available","Avail-Pending OA","Pending OA"])]))
+    m3.metric("Demurrage Risk",    len(fdf[fdf["Status"]=="Demurrage Risk"]))
+    m4.metric("On Water",          len(fdf[fdf["Status"]=="On Water"]))
+    st.dataframe(fdf, use_container_width=True, hide_index=True, height=420)
 
 # ── TRACK & TRACE ──────────────────────────────────────────────────────────────
 def page_track():
@@ -468,91 +454,6 @@ def page_quote():
             st.plotly_chart(fig, use_container_width=True)
 
 
-# ── INTERNAL DASHBOARD ─────────────────────────────────────────────────────────
-def page_dashboard():
-    if st.session_state.role != "internal":
-        st.error("Access denied."); return
-    int_badge(); sidebar_nav()
-    st.title("Internal Dashboard")
-    tab_ov, tab_rep, tab_set = st.tabs(["Overview","Reports","Settings"])
-    with tab_ov:
-        conn = get_conn()
-        dbr_live   = conn.execute("SELECT COUNT(*) FROM dbr_containers").fetchone()[0]
-        dr_live    = conn.execute("SELECT COUNT(*) FROM delivery_report").fetchone()[0]
-        last_batch = conn.execute("SELECT file_name FROM dbr_upload_log ORDER BY id DESC LIMIT 1").fetchone()
-        conn.close()
-        total_cont = dbr_live if dbr_live > 0 else len(MOCK_SHIPMENTS)
-        dr_count   = dr_live  if dr_live  > 0 else len(MOCK_DELIVERY_DF)
-        m1,m2,m3,m4 = st.columns(4)
-        m1.metric("Tracked Containers", total_cont)
-        m2.metric("Delivery Records",   dr_count)
-        m3.metric("Active Carriers",    5)
-        m4.metric("Last DBR Upload", last_batch[0][:22] if last_batch else "Demo mode")
-        st.divider()
-        col_a,col_b = st.columns(2)
-        with col_a:
-            sd = MOCK_SHIPMENTS["Status"].value_counts().reset_index(); sd.columns=["Status","Count"]
-            fig1 = px.bar(sd,x="Status",y="Count",title="Containers by Status",
-                          color="Status",color_discrete_sequence=px.colors.qualitative.Set2)
-            fig1.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font_color="#ccc",showlegend=False)
-            st.plotly_chart(fig1, use_container_width=True)
-        with col_b:
-            cd = MOCK_SHIPMENTS["Carrier"].value_counts().reset_index(); cd.columns=["Carrier","Containers"]
-            fig2 = px.pie(cd,names="Carrier",values="Containers",title="Volume by Carrier",hole=0.35,
-                          color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)",font_color="#ccc")
-            st.plotly_chart(fig2, use_container_width=True)
-        fcd = MOCK_SHIPMENTS["Dest FC"].value_counts().reset_index(); fcd.columns=["Dest FC","Containers"]
-        fig3 = px.bar(fcd,x="Dest FC",y="Containers",title="Volume by Destination FC",color_discrete_sequence=["#1E88E5"])
-        fig3.update_layout(paper_bgcolor="rgba(0,0,0,0)",plot_bgcolor="rgba(0,0,0,0)",font_color="#ccc")
-        st.plotly_chart(fig3, use_container_width=True)
-    with tab_rep:
-        st.markdown("### Quick Links")
-        r1,r2 = st.columns(2)
-        with r1:
-            st.markdown("**DBR Dashboard**"); st.caption("Daily Booking Report — all 8 sheets, carrier filters, export.")
-            if st.button("Open DBR Dashboard", key="dash_dbr", use_container_width=True): nav("dbr_dashboard")
-        with r2:
-            st.markdown("**Delivery Report**"); st.caption("Delivery actuals by container, FC, and carrier.")
-            if st.button("Open Delivery Report", key="dash_dr", use_container_width=True): nav("delivery_report")
-    with tab_set:
-        st.markdown("### Data Architecture")
-        st.markdown('<span style="background:#7a3800;color:#ffd580;padding:3px 10px;border-radius:4px;font-size:12px;font-weight:700;">DEMO MODE — SQLite</span>', unsafe_allow_html=True)
-        st.markdown("##### Current State (Beta)")
-        st.markdown("""
-- **DB:** SQLite — ephemeral on Streamlit Cloud, resets on restart
-- **Data entry:** Manual uploads (DBR Excel, Delivery Report Excel)
-- **Carrier reporting:** Portal UI built; submissions stored in DB
-        """)
-        st.markdown("##### Target State (Amazon Servers)")
-        st.markdown("""
-- **DB:** Amazon RDS (PostgreSQL) — persistent, scalable
-- **DBR pipeline:** `extract_dbr_attachments.py` (already running on QM) extended to push parsed data to S3 → RDS nightly
-- **Delivery Report:** Automated pull from internal WMS/Oracle via Lambda → RDS
-- **Carrier submissions:** Portal replaces email attachments entirely — carriers submit here, data lands in RDS in real time
-- **Reminders:** Scheduled Lambda sends email/SES reminder to carriers at 1 PM MST if not yet submitted
-- **Code change to go live:** Swap `DB_PATH` (SQLite) → `psycopg2` connection string (RDS) — one line
-        """)
-        st.divider()
-        st.markdown("##### Carrier Submission Status — Today")
-        conn = get_conn()
-        today_subs = {}
-        for u,v in USERS.items():
-            if v["role"] == "carrier":
-                sc = v["scac"]
-                total_c   = len(CARRIER_CONTAINERS.get(sc,[]))
-                submitted = conn.execute("SELECT COUNT(*) FROM carrier_submissions WHERE submission_date=? AND carrier_scac=? AND is_submitted=1",(str(_t),sc)).fetchone()[0]
-                today_subs[v["display"]] = {"scac":sc,"submitted":submitted,"total":total_c}
-        conn.close()
-        if today_subs:
-            rows = [{"Carrier":name,"SCAC":d["scac"],"Submitted":d["submitted"],"Total":d["total"],
-                     "Status":"✅ Complete" if d["submitted"]==d["total"] and d["total"]>0 else ("⚠ Partial" if d["submitted"]>0 else "🔴 Not Started")}
-                    for name,d in today_subs.items()]
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-        st.caption("Automated reminder sent at 1 PM MST to carriers with outstanding submissions (production feature).")
-        st.divider()
-        st.markdown("**Current admin:** agladmin | **Carriers:** ARVY, ATMI, HRRD, RKNE, TGHE, GBDV")
-
 # ── DBR DASHBOARD ──────────────────────────────────────────────────────────────
 def parse_dbr_excel(file_bytes, file_name):
     results, errors = {}, []
@@ -602,70 +503,6 @@ def last_upload_info():
     conn = get_conn()
     row = conn.execute("SELECT file_name,sheets_loaded,rows_loaded,uploaded_at FROM dbr_upload_log ORDER BY id DESC LIMIT 1").fetchone()
     conn.close(); return row
-
-def page_dbr_dashboard():
-    if st.session_state.role != "internal":
-        st.error("Access denied."); return
-    sidebar_nav()
-    active_scac = st.session_state.get("view_as_scac")
-    carrier_options = {u:v for u,v in USERS.items() if v["role"]=="carrier"}
-    if active_scac:
-        carrier_name = next((f"{v['display']} ({v['scac']})" for v in carrier_options.values() if v["scac"]==active_scac), active_scac)
-        preview_badge(carrier_name)
-    else:
-        int_badge()
-    st.title("DBR Dashboard")
-    st.caption("Daily Booking Report — container tracking across all carriers and statuses.")
-    if not active_scac:
-        with st.expander("Upload DBR File", expanded=False):
-            up = st.file_uploader("DBR Excel (.xlsx)", type=["xlsx"], key="dbr_up")
-            if up and st.button("Process Upload", type="primary", key="dbr_proc"):
-                with st.spinner("Parsing..."):
-                    batch_id = str(uuid.uuid4())[:8]
-                    parsed, errors = parse_dbr_excel(up.read(), up.name)
-                    for e in errors: st.warning(e)
-                    if parsed:
-                        sheets,rows = store_dbr_batch(parsed,up.name,batch_id)
-                        st.success(f"Loaded {rows} rows across {sheets} sheets from {up.name}")
-                    else: st.error("No sheets loaded — check file format.")
-        info = last_upload_info()
-        if info: st.caption(f"Last upload: **{info[0]}** — {info[2]} rows, {info[1]} sheets — {info[3][:16]} UTC")
-        else: st.caption("No file uploaded yet — showing demo data.")
-    sheet_names = list(SHEET_CFG.keys())
-    tabs = st.tabs(sheet_names)
-    for i,sheet_name in enumerate(sheet_names):
-        cfg = SHEET_CFG[sheet_name]
-        with tabs[i]:
-            df = load_dbr_sheet(sheet_name, carrier_filter=active_scac if active_scac and cfg["carrier_col"] else None)
-            if df.empty:
-                df = MOCK_DBR.get(sheet_name, pd.DataFrame()).copy()
-                if active_scac and cfg["carrier_col"] and cfg["carrier_col"] in df.columns:
-                    df = df[df[cfg["carrier_col"]]==active_scac]
-                if not df.empty: st.caption("Demo data — upload a DBR file to see live data.")
-            if df.empty:
-                st.info(f"No data for '{sheet_name}'."); continue
-            c1,c2,c3 = st.columns([2,2,1])
-            with c1:
-                srch = st.text_input("Search",placeholder="Container ID...",key=f"ds_{i}",label_visibility="collapsed")
-            with c2:
-                if not active_scac and cfg["carrier_col"] and cfg["carrier_col"] in df.columns:
-                    opts = ["All"] + sorted(df[cfg["carrier_col"]].dropna().unique().tolist())
-                    csel = st.selectbox("Carrier",opts,key=f"dc_{i}",label_visibility="collapsed")
-                else:
-                    csel = "All"
-                    if active_scac: st.caption(f"Carrier: **{active_scac}**")
-            with c3: st.metric("Rows", len(df))
-            fdf = df.copy()
-            if srch:
-                ccol = next((c for c in cfg["container_cols"] if c in fdf.columns),None)
-                if ccol: fdf = fdf[fdf[ccol].str.contains(srch,case=False,na=False)]
-            if csel!="All" and cfg["carrier_col"] and cfg["carrier_col"] in fdf.columns:
-                fdf = fdf[fdf[cfg["carrier_col"]]==csel]
-            st.dataframe(fdf,use_container_width=True,hide_index=True,height=360)
-            buf = BytesIO(); fdf.to_excel(buf,index=False,engine="openpyxl")
-            st.download_button(f"Export {sheet_name}",data=buf.getvalue(),
-                file_name=f"{sheet_name.replace(' ','_')}_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",key=f"de_{i}")
 
 # ── DELIVERY REPORT ────────────────────────────────────────────────────────────
 DR_COL_MAP = {"Container Id":"container_id","ASN / Load Number":"asn_load_number",
@@ -864,7 +701,7 @@ def page_carrier_portal():
       <span style='color:#fff;font-size:20px;font-weight:700;'>{dl_label if not urgent else "Submit now"}</span>
     </div>""", unsafe_allow_html=True)
 
-    tab_sub, tab_hist, tab_dr = st.tabs(["Today's Submission","Submission History","Delivery Report"])
+    tab_sub, tab_hist = st.tabs(["Today's Submission","Submission History"])
 
     with tab_sub:
         today_str  = str(_t)
@@ -990,198 +827,228 @@ def page_carrier_portal():
         hist["Submitted"] = hist["is_submitted"].map({1:"Yes",0:"Draft"})
         st.dataframe(hist.drop(columns=["is_submitted"],errors="ignore"), use_container_width=True, hide_index=True, height=320)
 
-    with tab_dr:
-        df = load_delivery_report(scac)
-        if df.empty:
-            df = MOCK_DELIVERY_DF[MOCK_DELIVERY_DF["carrier"]==scac].copy()
-        st.metric("Delivery Records", len(df))
-        if not df.empty:
-            st.dataframe(df, use_container_width=True, hide_index=True, height=340)
-            buf = BytesIO(); df.to_excel(buf, index=False, engine="openpyxl")
-            st.download_button("Export", data=buf.getvalue(),
-                file_name=f"delivery_report_{scac}_{date.today()}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="cp_dr_exp")
-        else:
-            st.info("No delivery records on file.")
 
 
 
 
-# ── BRIDGE VIEW (INTERNAL) ──────────────────────────────────────────────────────
-def page_bridge_view():
-    sidebar_nav()
-    int_badge()
-    st.markdown("## 🌉 Daily Bridge View")
-    st.caption("GVT container bridge tracker — upload today's DailyBridges file to overlay carrier-submitted status.")
 
-    if "bridge_data" not in st.session_state:
-        st.session_state.bridge_data = {"port": None, "fc": None, "file_name": None, "upload_time": None}
+# ── OPS CENTER (INTERNAL) ──────────────────────────────────────────────────────
+def page_ops_center():
+    if st.session_state.role != "internal":
+        st.error("Access denied."); return
+    int_badge(); sidebar_nav()
+    st.markdown("## Ops Center")
 
-    col_up, col_meta = st.columns([3, 2])
-    with col_up:
-        uploaded = st.file_uploader("Upload DailyBridges Excel (.xlsx)", type=["xlsx"], key="bridge_file_upload",
-                                    label_visibility="collapsed")
-    with col_meta:
-        if st.session_state.bridge_data["file_name"]:
-            st.success(f"**{st.session_state.bridge_data['file_name']}** loaded at {st.session_state.bridge_data['upload_time']}")
-
-    if uploaded:
-        try:
-            xl = pd.ExcelFile(uploaded)
-            port_df = xl.parse("Port") if "Port" in xl.sheet_names else pd.DataFrame()
-            fc_df   = xl.parse("FC")   if "FC"   in xl.sheet_names else pd.DataFrame()
-            st.session_state.bridge_data = {
-                "port": port_df, "fc": fc_df,
-                "file_name": uploaded.name,
-                "upload_time": datetime.now().strftime("%H:%M UTC"),
-            }
-        except Exception as e:
-            st.error(f"Parse error: {e}"); return
-
-    bd = st.session_state.bridge_data
-    if bd["port"] is None and bd["fc"] is None:
-        st.info("Upload a DailyBridges Excel file exported from GVT. The file must contain 'Port' and 'FC' sheets.", icon="📂")
-        st.markdown("**Expected sheets:**")
-        st.markdown("- **Port** — containers at terminal, pre-gateout (demurrage risk)")
-        st.markdown("- **FC** — containers en route / at FC (detention risk)")
-        return
-
-    # Load carrier-submitted bridges for today
-    conn = get_conn()
     today_str = str(date.today())
-    subs = pd.read_sql_query(
-        "SELECT container_id, current_bridge, notes, submitted_at FROM carrier_submissions "
-        "WHERE is_submitted=1 AND submission_date=? ORDER BY submitted_at DESC",
-        conn, params=(today_str,))
+    active_scac = st.session_state.get("view_as_scac")
+
+    # ── KPI ROW ────────────────────────────────────────────────────────────────
+    conn = get_conn()
+    dbr_live   = conn.execute("SELECT COUNT(*) FROM dbr_containers").fetchone()[0]
+    dr_live    = conn.execute("SELECT COUNT(*) FROM delivery_report").fetchone()[0]
+    last_batch = conn.execute("SELECT file_name FROM dbr_upload_log ORDER BY id DESC LIMIT 1").fetchone()
+    all_br_req = [c for conts in CARRIER_CONTAINERS.values() for c in conts if c["default_status"] in BRIDGE_REQUIRED]
+    bridges_rx = conn.execute(
+        "SELECT COUNT(DISTINCT container_id) FROM carrier_submissions "
+        "WHERE submission_date=? AND is_submitted=1 AND current_bridge!=''", (today_str,)).fetchone()[0]
     conn.close()
-    # Latest bridge per container
-    sub_bridge = {}
+
+    total_cont    = dbr_live if dbr_live > 0 else len(MOCK_SHIPMENTS)
+    dr_count      = dr_live  if dr_live  > 0 else len(MOCK_DELIVERY_DF)
+    bridges_miss  = max(0, len(all_br_req) - bridges_rx)
+
+    m1,m2,m3,m4,m5 = st.columns(5)
+    m1.metric("Tracked Containers", total_cont)
+    m2.metric("Delivery Records",   dr_count)
+    m3.metric("Active Carriers",    len(CARRIER_CONTAINERS))
+    m4.metric("Bridges Missing",    bridges_miss, delta_color="inverse")
+    m5.metric("Last DBR Upload", last_batch[0][:20] if last_batch else "Demo mode")
+
+    st.divider()
+
+    # ── BRIDGE TRACKER ─────────────────────────────────────────────────────────
+    st.markdown("### Bridge Tracker")
+    bc1, bc2 = st.columns([1,3])
+    with bc1:
+        sel_date = st.date_input("Date", value=date.today(), key="oc_bv_date",
+                                 label_visibility="collapsed")
+    bv_date_str = str(sel_date)
+
+    master_rows = []
+    for scac, conts in CARRIER_CONTAINERS.items():
+        for c in conts:
+            master_rows.append({"carrier_scac":scac,"container_id":c["container_id"],
+                                 "dest_fc":c["dest_fc"],"eta":c["eta"],
+                                 "default_status":c["default_status"],"origin_port":c["origin_port"]})
+    master = pd.DataFrame(master_rows)
+
+    conn = get_conn()
+    subs = pd.read_sql_query(
+        "SELECT carrier_scac,container_id,current_status,current_bridge,prior_bridge,"
+        "planned_pu_date,notes,is_submitted,submitted_at "
+        "FROM carrier_submissions WHERE submission_date=?", conn, params=(bv_date_str,))
+    conn.close()
+
     if not subs.empty:
-        for _, r in subs.iterrows():
-            if r["container_id"] not in sub_bridge:
-                sub_bridge[r["container_id"]] = r["current_bridge"]
+        merged = master.merge(subs, on=["carrier_scac","container_id"], how="left")
+    else:
+        merged = master.copy()
+        for col in ["current_status","current_bridge","prior_bridge","planned_pu_date","notes","is_submitted","submitted_at"]:
+            merged[col] = None
 
-    def prep_sheet(df, sheet):
-        if df is None or df.empty:
-            return pd.DataFrame()
-        df = df.copy()
-        # Normalize container ID
-        cid_col = "Container ID" if "Container ID" in df.columns else (df.columns[1] if len(df.columns) > 1 else df.columns[0])
-        df["_cid"] = df[cid_col].astype(str).str.strip()
-        # Overlay carrier bridge
-        df["Carrier Bridge"] = df["_cid"].map(sub_bridge).fillna("")
-        # Resolve display bridge: prefer carrier submission, fall back to GVT Bridge column
-        bridge_col = "Bridge" if "Bridge" in df.columns else None
-        if bridge_col:
-            df["Bridge Status"] = df.apply(
-                lambda r: r["Carrier Bridge"] if r["Carrier Bridge"] else (r[bridge_col] if pd.notna(r[bridge_col]) else ""), axis=1)
-        else:
-            df["Bridge Status"] = df["Carrier Bridge"]
-        df["Bridge Missing"] = df["Bridge Status"].str.strip() == ""
-        df["Source"] = df["_cid"].apply(lambda c: "Carrier Portal" if sub_bridge.get(c) else ("GVT" if (bridge_col and pd.notna(df.loc[df["_cid"]==c, bridge_col].values[0]) and str(df.loc[df["_cid"]==c, bridge_col].values[0]).strip()) else "⚠️ Missing"))
-        return df
+    merged["Status"]         = merged["current_status"].where(merged["current_status"].notna(), merged["default_status"])
+    merged["Bridge Req"]     = merged["default_status"].isin(BRIDGE_REQUIRED)
+    merged["is_submitted"]   = merged["is_submitted"].fillna(0).astype(int)
+    merged["current_bridge"] = merged["current_bridge"].fillna("").astype(str)
+    merged["Bridge Status"]  = merged.apply(
+        lambda r: ("✅ Received" if r["current_bridge"].strip() else "⚠️ Missing")
+                  if r["Bridge Req"] else "—", axis=1)
 
-    def show_sheet(df, sheet_type):
-        if df is None or df.empty:
-            st.info(f"No {sheet_type} data in uploaded file."); return
+    scac_names = {v["scac"]: v["display"] for v in USERS.values() if v["scac"]}
+    merged["Carrier"] = merged["carrier_scac"].map(lambda s: scac_names.get(s, s))
 
-        df = prep_sheet(df, sheet_type)
+    # Carrier summary table
+    summary = []
+    for scac in sorted(CARRIER_CONTAINERS.keys()):
+        c_df  = merged[merged["carrier_scac"] == scac]
+        c_req = c_df[c_df["Bridge Req"]]
+        c_rec = int((c_req["current_bridge"].str.strip() != "").sum())
+        c_mis = len(c_req) - c_rec
+        summary.append({"Carrier": scac_names.get(scac, scac), "SCAC": scac,
+                         "Containers": len(c_df), "Bridge Req": len(c_req),
+                         "Received": c_rec, "Missing": c_mis,
+                         "Status": "✅ Complete" if c_mis == 0 and len(c_req) > 0
+                                   else ("⚠️ Partial" if c_rec > 0 else
+                                   ("🔴 None" if len(c_req) > 0 else "—"))})
+    st.dataframe(pd.DataFrame(summary), use_container_width=True, hide_index=True, height=240)
 
-        # Carrier filter
-        carrier_col = "GVT" if "GVT" in df.columns else None
-        fin_carrier = "Final Carrier" if "Final Carrier" in df.columns else None
-        carriers = []
-        if carrier_col:
-            carriers = sorted(df[carrier_col].dropna().astype(str).unique().tolist())
-        elif fin_carrier:
-            carriers = sorted(df[fin_carrier].dropna().astype(str).unique().tolist())
-
-        f1, f2, f3 = st.columns(3)
+    with st.expander("All Containers — Bridge Detail", expanded=False):
+        f1, f2 = st.columns(2)
         with f1:
-            sel_carrier = st.selectbox("Filter by Carrier", ["All"] + carriers, key=f"bv_carr_{sheet_type}")
+            carr_opts = ["All"] + sorted(merged["carrier_scac"].unique().tolist())
+            sel_car = st.selectbox("Carrier", carr_opts, key="oc_bv_carr")
         with f2:
-            sla_vals = sorted(df["Outside/Within SLA"].dropna().astype(str).unique().tolist()) if "Outside/Within SLA" in df.columns else []
-            sel_sla = st.selectbox("SLA Status", ["All"] + sla_vals, key=f"bv_sla_{sheet_type}")
-        with f3:
-            bridge_filter = st.selectbox("Bridge Status", ["All", "Missing", "Received"], key=f"bv_bfilt_{sheet_type}")
+            sel_bs  = st.selectbox("Bridge Status",
+                                   ["All","⚠️ Missing","✅ Received","Not Required"], key="oc_bv_bs")
+        filt = merged.copy()
+        if sel_car != "All":
+            filt = filt[filt["carrier_scac"] == sel_car]
+        if sel_bs == "⚠️ Missing":
+            filt = filt[filt["Bridge Status"] == "⚠️ Missing"]
+        elif sel_bs == "✅ Received":
+            filt = filt[filt["Bridge Status"] == "✅ Received"]
+        elif sel_bs == "Not Required":
+            filt = filt[~filt["Bridge Req"]]
 
-        filtered = df.copy()
-        if sel_carrier != "All":
-            if carrier_col and carrier_col in filtered.columns:
-                filtered = filtered[filtered[carrier_col].astype(str) == sel_carrier]
-            elif fin_carrier and fin_carrier in filtered.columns:
-                filtered = filtered[filtered[fin_carrier].astype(str) == sel_carrier]
-        if sel_sla != "All" and "Outside/Within SLA" in filtered.columns:
-            filtered = filtered[filtered["Outside/Within SLA"].astype(str) == sel_sla]
-        if bridge_filter == "Missing":
-            filtered = filtered[filtered["Bridge Missing"]]
-        elif bridge_filter == "Received":
-            filtered = filtered[~filtered["Bridge Missing"]]
+        DISP = ["Carrier","container_id","dest_fc","origin_port","eta","Status",
+                "current_bridge","prior_bridge","planned_pu_date","Bridge Status","submitted_at"]
+        RNME = {"container_id":"Container","dest_fc":"FC","origin_port":"Port","eta":"ETA",
+                "current_bridge":"Bridge","prior_bridge":"Prior Bridge",
+                "planned_pu_date":"Planned PU","submitted_at":"Submitted At"}
+        disp = filt[[c for c in DISP if c in filt.columns]].rename(columns=RNME)
 
-        # Metrics row
-        total = len(filtered)
-        received = int((~filtered["Bridge Missing"]).sum())
-        missing  = int(filtered["Bridge Missing"].sum())
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total Containers", total)
-        m2.metric("Bridges Received", received)
-        m3.metric("Bridges Missing", missing, delta=f"{round(missing/total*100) if total else 0}% open", delta_color="inverse")
-        portal_ct = int((filtered["_cid"].isin(sub_bridge.keys())).sum())
-        m4.metric("Via Carrier Portal", portal_ct)
-
-        # Build display table
-        show_cols_port = ["Container ID","GVT","Final Carrier","Business","Container Status",
-                         "ETA","ATA","av_by_dray","DEM LFD (combo)","In DEM Standard",
-                         "Destination","Appt Status","Outside/Within SLA","Bridge Status","Source"]
-        show_cols_fc   = ["Container ID","GVT","Final Carrier","Business","Container Status",
-                         "ETA","ATA","Terminal Gateout","DET LFD (combo)","In DET",
-                         "Destination","Appt Status","Outside/Within SLA","Bridge Status","Source"]
-        target_cols = show_cols_port if sheet_type == "Port" else show_cols_fc
-        display_cols = [c for c in target_cols if c in filtered.columns]
-        display_df = filtered[display_cols].copy()
-
-        # Rename for readability
-        rename_map = {
-            "DEM LFD (combo)": "DEM LFD", "In DEM Standard": "In DEM",
-            "DET LFD (combo)": "DET LFD", "av_by_dray": "Avail (Dray)",
-            "Terminal Gateout": "Gateout", "Outside/Within SLA": "SLA",
-        }
-        display_df = display_df.rename(columns={k: v for k, v in rename_map.items() if k in display_df.columns})
-
-        # Highlight missing bridges
-        def highlight_missing(row):
-            if row.get("Source","") == "⚠️ Missing":
-                return ["background-color:#3d1a1a"] * len(row)
-            elif row.get("Source","") == "Carrier Portal":
-                return ["background-color:#1a2e1a"] * len(row)
+        def row_color(row):
+            bs = row.get("Bridge Status","")
+            if bs == "⚠️ Missing": return ["background-color:#3d1a1a"] * len(row)
+            if bs == "✅ Received": return ["background-color:#1a2e1a"] * len(row)
             return [""] * len(row)
 
-        styled = display_df.style.apply(highlight_missing, axis=1)
-        st.dataframe(styled, use_container_width=True, hide_index=True, height=420)
+        st.dataframe(disp.style.apply(row_color, axis=1),
+                     use_container_width=True, hide_index=True, height=360)
+        buf = BytesIO(); disp.to_excel(buf, index=False, engine="openpyxl")
+        st.download_button("Export Bridge View", data=buf.getvalue(),
+            file_name=f"bridge_{bv_date_str}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="oc_bv_exp")
 
-        # Export
-        buf = BytesIO()
-        display_df.to_excel(buf, index=False, engine="openpyxl")
-        st.download_button(
-            f"Export {sheet_type} View (.xlsx)",
-            data=buf.getvalue(),
-            file_name=f"bridge_{sheet_type.lower()}_{date.today()}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key=f"bv_export_{sheet_type}")
+    st.divider()
 
-    # Last-upload header
-    if bd["file_name"]:
-        st.markdown(f"**File:** {bd['file_name']} &nbsp;|&nbsp; **Uploaded:** {bd['upload_time']} &nbsp;|&nbsp; **Today:** {today_str}")
-        if sub_bridge:
-            st.success(f"{len(sub_bridge)} carrier bridge(s) received via portal today — overlaid below.", icon="✅")
+    # ── CONTAINER STATUS ───────────────────────────────────────────────────────
+    st.markdown("### Container Status")
+    cs1, cs2, cs3 = st.columns([2, 2, 2])
+    with cs1:
+        sel_sheet = st.selectbox("Category", list(SHEET_CFG.keys()), key="oc_sheet")
+    cfg = SHEET_CFG[sel_sheet]
+    df_sheet = load_dbr_sheet(sel_sheet,
+                               carrier_filter=active_scac if active_scac and cfg["carrier_col"] else None)
+    if df_sheet.empty:
+        df_sheet = MOCK_DBR.get(sel_sheet, pd.DataFrame()).copy()
+        if active_scac and cfg["carrier_col"] and cfg["carrier_col"] in df_sheet.columns:
+            df_sheet = df_sheet[df_sheet[cfg["carrier_col"]] == active_scac]
+    with cs2:
+        if not active_scac and cfg["carrier_col"] and not df_sheet.empty and cfg["carrier_col"] in df_sheet.columns:
+            c_opts = ["All"] + sorted(df_sheet[cfg["carrier_col"]].dropna().unique().tolist())
+            csel = st.selectbox("Carrier", c_opts, key="oc_carr", label_visibility="collapsed")
         else:
-            st.warning("No carrier bridges submitted via portal today yet.", icon="⚠️")
+            csel = "All"
+    with cs3:
+        srch = st.text_input("Search", placeholder="Container ID...", key="oc_srch",
+                             label_visibility="collapsed")
+    fdf = df_sheet.copy()
+    if srch:
+        ccol = next((c for c in cfg["container_cols"] if c in fdf.columns), None)
+        if ccol: fdf = fdf[fdf[ccol].str.contains(srch, case=False, na=False)]
+    if csel != "All" and cfg["carrier_col"] and cfg["carrier_col"] in fdf.columns:
+        fdf = fdf[fdf[cfg["carrier_col"]] == csel]
+    st.caption(f"{len(fdf)} rows" + ("  · Demo data" if df_sheet is not None and df_sheet.equals(MOCK_DBR.get(sel_sheet, pd.DataFrame())) else ""))
+    st.dataframe(fdf, use_container_width=True, hide_index=True, height=360)
+    buf = BytesIO(); fdf.to_excel(buf, index=False, engine="openpyxl")
+    st.download_button(f"Export {sel_sheet}", data=buf.getvalue(),
+        file_name=f"{sel_sheet.replace(' ','_')}_{date.today()}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="oc_dbr_exp")
 
-    tab_port, tab_fc = st.tabs([f"Port ({len(bd['port']) if bd['port'] is not None else 0})", f"FC ({len(bd['fc']) if bd['fc'] is not None else 0})"])
-    with tab_port:
-        show_sheet(bd["port"], "Port")
-    with tab_fc:
-        show_sheet(bd["fc"], "FC")
+    st.divider()
+
+    # ── CHARTS & UPLOAD / SYSTEM (COLLAPSED) ───────────────────────────────────
+    with st.expander("Volume Charts", expanded=False):
+        ca, cb = st.columns(2)
+        with ca:
+            sd = MOCK_SHIPMENTS["Status"].value_counts().reset_index(); sd.columns=["Status","Count"]
+            fig1 = px.bar(sd, x="Status", y="Count", title="Containers by Status",
+                          color="Status", color_discrete_sequence=px.colors.qualitative.Set2)
+            fig1.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                               font_color="#ccc", showlegend=False)
+            st.plotly_chart(fig1, use_container_width=True)
+        with cb:
+            cd = MOCK_SHIPMENTS["Carrier"].value_counts().reset_index(); cd.columns=["Carrier","Containers"]
+            fig2 = px.pie(cd, names="Carrier", values="Containers", title="Volume by Carrier", hole=0.35,
+                          color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig2.update_layout(paper_bgcolor="rgba(0,0,0,0)", font_color="#ccc")
+            st.plotly_chart(fig2, use_container_width=True)
+
+    with st.expander("Upload DBR / System Status", expanded=False):
+        up_col, sys_col = st.columns(2)
+        with up_col:
+            st.markdown("**Upload DBR File**")
+            up = st.file_uploader("DBR Excel (.xlsx)", type=["xlsx"], key="oc_dbr_up",
+                                  label_visibility="collapsed")
+            if up and st.button("Process Upload", type="primary", key="oc_dbr_proc"):
+                with st.spinner("Parsing..."):
+                    batch_id = str(uuid.uuid4())[:8]
+                    parsed, errors = parse_dbr_excel(up.read(), up.name)
+                    for e in errors: st.warning(e)
+                    if parsed:
+                        sheets, rows = store_dbr_batch(parsed, up.name, batch_id)
+                        st.success(f"Loaded {rows} rows across {sheets} sheets — {up.name}")
+                    else: st.error("No sheets loaded — check file format.")
+            info = last_upload_info()
+            if info: st.caption(f"Last: **{info[0]}** — {info[2]} rows · {info[3][:16]} UTC")
+            else: st.caption("No file uploaded yet.")
+        with sys_col:
+            st.markdown("**System Status**")
+            st.markdown('<span style="background:#7a3800;color:#ffd580;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">DEMO — SQLite</span>', unsafe_allow_html=True)
+            st.markdown("**Current:** SQLite (ephemeral)  \n**Target:** Amazon RDS (PostgreSQL)")
+            st.markdown("**Carriers:** " + " · ".join(sorted(CARRIER_CONTAINERS.keys())))
+            conn2 = get_conn()
+            sys_rows = []
+            for u, v in USERS.items():
+                if v["role"] == "carrier":
+                    sc = v["scac"]
+                    tc = len(CARRIER_CONTAINERS.get(sc, []))
+                    s  = conn2.execute("SELECT COUNT(*) FROM carrier_submissions WHERE submission_date=? AND carrier_scac=? AND is_submitted=1", (today_str, sc)).fetchone()[0]
+                    sys_rows.append({"Carrier": v["display"], "SCAC": sc, "Submitted": s, "Total": tc,
+                                     "Status": "✅" if s == tc and tc > 0 else ("⚠" if s > 0 else "🔴")})
+            conn2.close()
+            st.dataframe(pd.DataFrame(sys_rows), use_container_width=True, hide_index=True, height=220)
 
 
 # ── ROUTER ─────────────────────────────────────────────────────────────────────
@@ -1193,9 +1060,7 @@ else:
     elif pg == "shipments":       page_shipments()
     elif pg == "track":           page_track()
     elif pg == "quote":           page_quote()
-    elif pg == "dashboard":       page_dashboard()
-    elif pg == "dbr_dashboard":   page_dbr_dashboard()
+    elif pg in ("dashboard","dbr_dashboard","ops_center","bridge_view"): page_ops_center()
     elif pg == "delivery_report": page_delivery_report()
-    elif pg == "carrier_portal":   page_carrier_portal()
-    elif pg == "bridge_view":      page_bridge_view()
+    elif pg == "carrier_portal":  page_carrier_portal()
     else:                         page_landing()
