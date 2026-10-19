@@ -168,6 +168,7 @@ def sidebar_nav():
     with st.sidebar:
         st.markdown(f"**{st.session_state.display_name}**")
         st.caption("Amazon Global Logistics")
+        st.markdown('<span style="background:#7a3800;color:#ffd580;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:700;">BETA — PROTOTYPE</span>', unsafe_allow_html=True)
         st.divider()
         items = [("Home","landing"),("Shipments","shipments"),("Track & Trace","track"),("Get a Quote","quote")]
         if role == "internal":
@@ -245,6 +246,7 @@ def page_landing():
         Connecting global supply chains with precision, speed, and visibility.
       </p>
     </div>""", unsafe_allow_html=True)
+    st.info("**Beta prototype** — data shown is for demonstration purposes only. Persistence and live integrations are enabled on Amazon server deployment.", icon="ℹ️")
     m1,m2,m3,m4,m5 = st.columns(5)
     m1.metric("Active Containers","2,408","+12 today")
     m2.metric("On Water","1,104","+3 voyages")
