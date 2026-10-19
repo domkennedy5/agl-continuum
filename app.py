@@ -14,10 +14,11 @@ st.set_page_config(page_title="Continuum | AGL", page_icon="🌐", layout="wide"
 USERS = {
     "agladmin": {"password": "continuum2026", "role": "internal", "scac": None,   "display": "AGL Admin"},
     "arvy":     {"password": "arvy2026",       "role": "carrier",  "scac": "ARVY", "display": "Arrive Logistics"},
-    "atmi":     {"password": "atmi2026",       "role": "carrier",  "scac": "ATMI", "display": "ATM Inc."},
-    "hudd":     {"password": "hudd2026",       "role": "carrier",  "scac": "HUDD", "display": "Huddle Transport"},
-    "rkne":     {"password": "rkne2026",       "role": "carrier",  "scac": "RKNE", "display": "Roekcne"},
-    "tghe":     {"password": "tghe2026",       "role": "carrier",  "scac": "TGHE", "display": "TGH Express"},
+    "atmi":     {"password": "atmi2026",       "role": "carrier",  "scac": "ATMI", "display": "Cargomatic"},
+    "hrrd":     {"password": "hrrd2026",       "role": "carrier",  "scac": "HRRD", "display": "HUDD/Maersk"},
+    "rkne":     {"password": "rkne2026",       "role": "carrier",  "scac": "RKNE", "display": "Road One"},
+    "tghe":     {"password": "tghe2026",       "role": "carrier",  "scac": "TGHE", "display": "Tighe Logistics"},
+    "gbdv":     {"password": "gbdv2026",       "role": "carrier",  "scac": "GBDV", "display": "Glovis"},
 }
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "continuum.db")
@@ -71,11 +72,11 @@ _t = date.today()
 
 MOCK_SHIPMENTS = pd.DataFrame([
     {"Container":"MSCU1234567","Origin":"Shanghai, CN",  "Dest FC":"RIC6","Carrier":"ARVY","Status":"Available",        "ETA":str(_t+timedelta(1)), "Vessel":"EVER GIVEN",         "Type":"40HC"},
-    {"Container":"HLXU8765432","Origin":"Yantian, CN",   "Dest FC":"ILM1","Carrier":"HUDD","Status":"Delivery Appt Set","ETA":str(_t+timedelta(2)), "Vessel":"MSC OSCAR",          "Type":"45HC"},
+    {"Container":"HLXU8765432","Origin":"Yantian, CN",   "Dest FC":"ILM1","Carrier":"HRRD","Status":"Delivery Appt Set","ETA":str(_t+timedelta(2)), "Vessel":"MSC OSCAR",          "Type":"45HC"},
     {"Container":"CMAU3345678","Origin":"Ningbo, CN",    "Dest FC":"RIC6","Carrier":"ARVY","Status":"In Transit",       "ETA":str(_t+timedelta(7)), "Vessel":"COSCO UNIVERSE",     "Type":"40HC"},
     {"Container":"TCKU9871234","Origin":"Busan, KR",     "Dest FC":"LAX9","Carrier":"ATMI","Status":"On Water",         "ETA":str(_t+timedelta(14)),"Vessel":"HMM ALGECIRAS",      "Type":"45HC"},
     {"Container":"MRKU4456789","Origin":"Tokyo, JP",     "Dest FC":"BOS7","Carrier":"RKNE","Status":"Pending OA",       "ETA":str(_t+timedelta(3)), "Vessel":"MSC GULSUN",         "Type":"40HC"},
-    {"Container":"EISU7893456","Origin":"Shanghai, CN",  "Dest FC":"ILM1","Carrier":"HUDD","Status":"Completed",        "ETA":str(_t-timedelta(2)), "Vessel":"EVER ACE",           "Type":"40HC"},
+    {"Container":"EISU7893456","Origin":"Shanghai, CN",  "Dest FC":"ILM1","Carrier":"HRRD","Status":"Completed",        "ETA":str(_t-timedelta(2)), "Vessel":"EVER ACE",           "Type":"40HC"},
     {"Container":"FCIU2345678","Origin":"Qingdao, CN",   "Dest FC":"RIC6","Carrier":"ARVY","Status":"In Transit",       "ETA":str(_t+timedelta(9)), "Vessel":"CMA CGM MARCO POLO", "Type":"45HC"},
     {"Container":"OOLU6789012","Origin":"Guangzhou, CN", "Dest FC":"BOS7","Carrier":"TGHE","Status":"Available",        "ETA":str(_t),              "Vessel":"EVER ALOT",          "Type":"40HC"},
     {"Container":"PONU4567890","Origin":"Kaohsiung, TW", "Dest FC":"EWR4","Carrier":"RKNE","Status":"On Water",         "ETA":str(_t+timedelta(11)),"Vessel":"MSC LORETO",         "Type":"40HC"},
@@ -85,7 +86,7 @@ MOCK_SHIPMENTS = pd.DataFrame([
 MOCK_TRACK_DB = {
     "MSCU1234567": {"vessel":"EVER GIVEN","origin":"Shanghai, CN","destination":"Richmond, VA — RIC6","carrier":"ARVY","container_type":"40HC",
         "stages":[("Origin Gate-In","Oct 01, 2026","done"),("Vessel Departed","Oct 04, 2026","done"),("Port Discharged","Oct 18, 2026","done"),("Available for Pickup","Oct 19, 2026","active"),("Out for Delivery","TBD","pending"),("Delivered to FC","TBD","pending")]},
-    "HLXU8765432": {"vessel":"MSC OSCAR","origin":"Yantian, CN","destination":"Wilmington, NC — ILM1","carrier":"HUDD","container_type":"45HC",
+    "HLXU8765432": {"vessel":"MSC OSCAR","origin":"Yantian, CN","destination":"Wilmington, NC — ILM1","carrier":"HRRD","container_type":"45HC",
         "stages":[("Origin Gate-In","Oct 05, 2026","done"),("Vessel Departed","Oct 08, 2026","done"),("Port Discharged","Oct 17, 2026","done"),("Available for Pickup","Oct 18, 2026","done"),("Out for Delivery","Oct 19, 2026","active"),("Delivered to FC","TBD","pending")]},
     "CMAU3345678": {"vessel":"COSCO UNIVERSE","origin":"Ningbo, CN","destination":"Richmond, VA — RIC6","carrier":"ARVY","container_type":"40HC",
         "stages":[("Origin Gate-In","Oct 10, 2026","done"),("Vessel Departed","Oct 12, 2026","done"),("Port Discharged","TBD","pending"),("Available for Pickup","TBD","pending"),("Out for Delivery","TBD","pending"),("Delivered to FC","TBD","pending")]},
@@ -93,9 +94,9 @@ MOCK_TRACK_DB = {
 
 MOCK_DELIVERY_DF = pd.DataFrame([
     {"container_id":"MSCU1234567","asn_load_number":"ASN-001234","destination_fc":"RIC6","actual_fc":"RIC6","actual_delivery_dt":str(_t-timedelta(5)),"supplier":"Samsung Electronics","po_number":"PO-9872341","part_number":"ARM-ROBOT-001","part_description":"Robotic Arm Assembly","quantity":4,"carrier":"ARVY","region":"East"},
-    {"container_id":"HLXU8765432","asn_load_number":"ASN-001235","destination_fc":"ILM1","actual_fc":"ILM1","actual_delivery_dt":str(_t-timedelta(3)),"supplier":"Fanuc Corp","po_number":"PO-9872342","part_number":"CTRL-UNIT-007","part_description":"Controller Unit v7","quantity":2,"carrier":"HUDD","region":"Southeast"},
+    {"container_id":"HLXU8765432","asn_load_number":"ASN-001235","destination_fc":"ILM1","actual_fc":"ILM1","actual_delivery_dt":str(_t-timedelta(3)),"supplier":"Fanuc Corp","po_number":"PO-9872342","part_number":"CTRL-UNIT-007","part_description":"Controller Unit v7","quantity":2,"carrier":"HRRD","region":"Southeast"},
     {"container_id":"CMAU3345678","asn_load_number":"ASN-001236","destination_fc":"RIC6","actual_fc":"RIC6","actual_delivery_dt":str(_t-timedelta(1)),"supplier":"KUKA Robotics","po_number":"PO-9872343","part_number":"SENSOR-PKG-12","part_description":"Sensor Package Set","quantity":10,"carrier":"ARVY","region":"East"},
-    {"container_id":"EISU7893456","asn_load_number":"ASN-001237","destination_fc":"ILM1","actual_fc":"ILM1","actual_delivery_dt":str(_t-timedelta(2)),"supplier":"ABB Ltd","po_number":"PO-9872344","part_number":"DRIVE-MOD-04","part_description":"Drive Module 04","quantity":6,"carrier":"HUDD","region":"Southeast"},
+    {"container_id":"EISU7893456","asn_load_number":"ASN-001237","destination_fc":"ILM1","actual_fc":"ILM1","actual_delivery_dt":str(_t-timedelta(2)),"supplier":"ABB Ltd","po_number":"PO-9872344","part_number":"DRIVE-MOD-04","part_description":"Drive Module 04","quantity":6,"carrier":"HRRD","region":"Southeast"},
     {"container_id":"TCKU9871234","asn_load_number":"ASN-001238","destination_fc":"LAX9","actual_fc":"LAX9","actual_delivery_dt":str(_t-timedelta(7)),"supplier":"Yaskawa Electric","po_number":"PO-9872345","part_number":"MOTOR-ASSY-02","part_description":"Motor Assembly 02","quantity":8,"carrier":"ATMI","region":"West"},
     {"container_id":"OOLU6789012","asn_load_number":"ASN-001239","destination_fc":"BOS7","actual_fc":"BOS7","actual_delivery_dt":str(_t-timedelta(4)),"supplier":"Omron Corp","po_number":"PO-9872346","part_number":"CAM-MODULE-09","part_description":"Vision Camera Module","quantity":12,"carrier":"TGHE","region":"Northeast"},
 ])
@@ -117,11 +118,11 @@ MOCK_DBR = {
         {"Container":"FCIU2345678","Carrier":"ARVY","Origin Port":"Norfolk","OA Date":str(_t),"Current Bridge":"Rescheduling","Prior Day's Bridge":"Orig appt cancelled","Notes":""},
     ]),
     "Completed Pickups": pd.DataFrame([
-        {"Container":"HLXU8765432","Carrier":"HUDD","Pickup Date":str(_t-timedelta(1)),"Origin Port":"Wilmington","Destination FC":"ILM1","Current Bridge":"En route","Prior Day's Bridge":"Picked up","Planned PU Date":str(_t-timedelta(1)),"Notes":""},
+        {"Container":"HLXU8765432","Carrier":"HRRD","Pickup Date":str(_t-timedelta(1)),"Origin Port":"Wilmington","Destination FC":"ILM1","Current Bridge":"En route","Prior Day's Bridge":"Picked up","Planned PU Date":str(_t-timedelta(1)),"Notes":""},
     ]),
     "Delivery Appointments": pd.DataFrame([
         {"Container":"CMAU3345678","Carrier":"ARVY","Appt Date":str(_t+timedelta(1)),"Appt Time":"09:30","Destination FC":"RIC6","Status":"Confirmed"},
-        {"Container":"HLXU8765432","Carrier":"HUDD","Appt Date":str(_t+timedelta(1)),"Appt Time":"07:30","Destination FC":"ILM1","Status":"Confirmed"},
+        {"Container":"HLXU8765432","Carrier":"HRRD","Appt Date":str(_t+timedelta(1)),"Appt Time":"07:30","Destination FC":"ILM1","Status":"Confirmed"},
     ]),
     "Completed Deliveries": pd.DataFrame([
         {"Container":"EISU7893456","Delivery Date":str(_t-timedelta(2)),"Destination FC":"ILM1","PO Number":"PO-9872344","Quantity":6},
