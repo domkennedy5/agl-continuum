@@ -81,6 +81,8 @@ MOCK_SHIPMENTS = pd.DataFrame([
     {"Container":"OOLU6789012","Origin":"Guangzhou, CN", "Dest FC":"BOS7","Carrier":"TGHE","Status":"Available",        "ETA":str(_t),              "Vessel":"EVER ALOT",          "Type":"40HC"},
     {"Container":"PONU4567890","Origin":"Kaohsiung, TW", "Dest FC":"EWR4","Carrier":"RKNE","Status":"On Water",         "ETA":str(_t+timedelta(11)),"Vessel":"MSC LORETO",         "Type":"40HC"},
     {"Container":"SUDU8901234","Origin":"Xiamen, CN",    "Dest FC":"RIC6","Carrier":"ATMI","Status":"Demurrage Risk",   "ETA":str(_t-timedelta(1)), "Vessel":"OOCL EUROPE",        "Type":"45HC"},
+    {"Container":"GLVU1122334","Origin":"Incheon, KR",   "Dest FC":"BOS7","Carrier":"GBDV","Status":"On Water",         "ETA":str(_t+timedelta(12)),"Vessel":"GLOVIS CORONA",      "Type":"40HC"},
+    {"Container":"GLVU5566778","Origin":"Busan, KR",     "Dest FC":"EWR4","Carrier":"GBDV","Status":"Available",        "ETA":str(_t+timedelta(1)), "Vessel":"GLOVIS SUPREME",     "Type":"45HC"},
 ])
 
 MOCK_TRACK_DB = {
@@ -99,6 +101,7 @@ MOCK_DELIVERY_DF = pd.DataFrame([
     {"container_id":"EISU7893456","asn_load_number":"ASN-001237","destination_fc":"ILM1","actual_fc":"ILM1","actual_delivery_dt":str(_t-timedelta(2)),"supplier":"ABB Ltd","po_number":"PO-9872344","part_number":"DRIVE-MOD-04","part_description":"Drive Module 04","quantity":6,"carrier":"HRRD","region":"Southeast"},
     {"container_id":"TCKU9871234","asn_load_number":"ASN-001238","destination_fc":"LAX9","actual_fc":"LAX9","actual_delivery_dt":str(_t-timedelta(7)),"supplier":"Yaskawa Electric","po_number":"PO-9872345","part_number":"MOTOR-ASSY-02","part_description":"Motor Assembly 02","quantity":8,"carrier":"ATMI","region":"West"},
     {"container_id":"OOLU6789012","asn_load_number":"ASN-001239","destination_fc":"BOS7","actual_fc":"BOS7","actual_delivery_dt":str(_t-timedelta(4)),"supplier":"Omron Corp","po_number":"PO-9872346","part_number":"CAM-MODULE-09","part_description":"Vision Camera Module","quantity":12,"carrier":"TGHE","region":"Northeast"},
+    {"container_id":"GLVU5566778","asn_load_number":"ASN-001240","destination_fc":"EWR4","actual_fc":"EWR4","actual_delivery_dt":str(_t-timedelta(1)),"supplier":"Hyundai Mobis","po_number":"PO-9872347","part_number":"LIDAR-UNIT-03","part_description":"LiDAR Sensor Unit","quantity":5,"carrier":"GBDV","region":"Northeast"},
 ])
 
 MOCK_QUOTE_HISTORY = [
@@ -112,6 +115,7 @@ MOCK_DBR = {
         {"Container":"MSCU1234567","Carrier":"ARVY","Origin Port":"Norfolk","Available Date":str(_t-timedelta(1)),"Current Bridge":"Awaiting driver","Prior Day's Bridge":"Terminal released","Planned PU Date":str(_t+timedelta(1)),"Notes":""},
         {"Container":"MRKU4456789","Carrier":"RKNE","Origin Port":"Norfolk","Available Date":str(_t),"Current Bridge":"OA scheduled","Prior Day's Bridge":"Available","Planned PU Date":str(_t+timedelta(2)),"Notes":"Priority"},
         {"Container":"OOLU6789012","Carrier":"TGHE","Origin Port":"Savannah","Available Date":str(_t),"Current Bridge":"Pending driver","Prior Day's Bridge":"Available","Planned PU Date":str(_t+timedelta(1)),"Notes":""},
+        {"Container":"GLVU5566778","Carrier":"GBDV","Origin Port":"Newark","Available Date":str(_t+timedelta(1)),"Current Bridge":"Vessel arriving","Prior Day's Bridge":"On water","Planned PU Date":str(_t+timedelta(2)),"Notes":""},
     ]),
     "OA - Missing Del Appt": pd.DataFrame([
         {"Container":"CMAU3345678","Carrier":"ARVY","Origin Port":"Norfolk","OA Date":str(_t-timedelta(1)),"Current Bridge":"FC not responding","Prior Day's Bridge":"Appt requested","Notes":"Follow up needed"},
@@ -128,6 +132,7 @@ MOCK_DBR = {
         {"Container":"EISU7893456","Delivery Date":str(_t-timedelta(2)),"Destination FC":"ILM1","PO Number":"PO-9872344","Quantity":6},
         {"Container":"TCKU9871234","Delivery Date":str(_t-timedelta(7)),"Destination FC":"LAX9","PO Number":"PO-9872345","Quantity":8},
         {"Container":"OOLU6789012","Delivery Date":str(_t-timedelta(4)),"Destination FC":"BOS7","PO Number":"PO-9872346","Quantity":12},
+        {"Container":"GLVU5566778","Delivery Date":str(_t-timedelta(1)),"Destination FC":"EWR4","PO Number":"PO-9872347","Quantity":5},
     ]),
     "Delivery Plan": pd.DataFrame([
         {"Container":"TCKU9871234","Vessel":"HMM ALGECIRAS","ETD":str(_t+timedelta(5)),"ETA":str(_t+timedelta(14)),"Destination FC":"BOS7","Type":"40HC"},
