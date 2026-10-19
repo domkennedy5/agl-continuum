@@ -36,7 +36,7 @@ SHEET_CFG = {
 DEFAULTS = {
     "auth": False, "page": "landing", "role": "external",
     "scac": None, "username": None, "display_name": "Guest",
-    "quote_tickets": [], "last_ticket": None, "track_query": "",
+    "quote_tickets": [], "last_ticket": None, "track_query": "", "view_as_scac": None,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -177,6 +177,22 @@ def sidebar_nav():
             if st.button(label, key=f"snav_{pg}", use_container_width=True):
                 nav(pg)
         st.divider()
+        # Carrier view selector — internal users only, shown on DBR + Delivery Report
+        if role == "internal" and st.session_state.page in ("dbr_dashboard", "delivery_report"):
+            st.markdown("**View as Carrier**")
+            carrier_options = {u: v for u, v in USERS.items() if v["role"] == "carrier"}
+            view_labels = ["Internal (All)"] + [f"{v['display']} ({v['scac']})" for v in carrier_options.values()]
+            view_scacs  = [None] + [v["scac"] for v in carrier_options.values()]
+            current_scac = st.session_state.get("view_as_scac")
+            current_idx  = view_scacs.index(current_scac) if current_scac in view_scacs else 0
+            sel = st.selectbox("", view_labels, index=current_idx, key="sidebar_view_as", label_visibility="collapsed")
+            new_scac = view_scacs[view_labels.index(sel)]
+            if new_scac != st.session_state.view_as_scac:
+                st.session_state.view_as_scac = new_scac
+                st.rerun()
+            if st.session_state.view_as_scac:
+                st.caption(f"Previewing: **{sel}**")
+            st.divider()
         if st.button("Sign Out", key="signout", use_container_width=True):
             for k in list(DEFAULTS.keys()):
                 st.session_state[k] = DEFAULTS[k]
@@ -529,15 +545,13 @@ def page_dbr_dashboard():
     if st.session_state.role != "internal":
         st.error("Access denied."); return
     sidebar_nav()
+    active_scac = st.session_state.get("view_as_scac")
     carrier_options = {u:v for u,v in USERS.items() if v["role"]=="carrier"}
-    view_labels = ["Internal (All Carriers)"] + [f"{v['display']} ({v['scac']})" for v in carrier_options.values()]
-    view_scacs  = [None] + [v["scac"] for v in carrier_options.values()]
-    vc,_ = st.columns([3,5])
-    with vc:
-        view_idx = st.selectbox("Viewing as",range(len(view_labels)),format_func=lambda i:view_labels[i],key="dbr_view_as",label_visibility="collapsed")
-    active_scac = view_scacs[view_idx]
-    if active_scac: preview_badge(view_labels[view_idx])
-    else: int_badge()
+    if active_scac:
+        carrier_name = next((f"{v['display']} ({v['scac']})" for v in carrier_options.values() if v["scac"]==active_scac), active_scac)
+        preview_badge(carrier_name)
+    else:
+        int_badge()
     st.title("DBR Dashboard")
     st.caption("Daily Booking Report — container tracking across all carriers and statuses.")
     if not active_scac:
@@ -622,18 +636,18 @@ def page_delivery_report():
     sidebar_nav()
     role = st.session_state.role; scac = st.session_state.scac
     if role == "internal":
-        carrier_options = {u:v for u,v in USERS.items() if v["role"]=="carrier"}
-        view_labels = ["Internal (All Carriers)"] + [f"{v['display']} ({v['scac']})" for v in carrier_options.values()]
-        view_scacs  = [None] + [v["scac"] for v in carrier_options.values()]
-        vc,_ = st.columns([3,5])
-        with vc:
-            view_idx = st.selectbox("Viewing as",range(len(view_labels)),format_func=lambda i:view_labels[i],key="dr_view_as",label_visibility="collapsed")
-        active_scac = view_scacs[view_idx]; is_preview = active_scac is not None
+        active_scac = st.session_state.get("view_as_scac")
+        is_preview  = active_scac is not None
     else:
         active_scac = scac; is_preview = False
-    if role=="carrier": carr_badge()
-    elif is_preview: preview_badge(view_labels[view_idx])
-    else: int_badge()
+    carrier_options = {u:v for u,v in USERS.items() if v["role"]=="carrier"}
+    if role=="carrier":
+        carr_badge()
+    elif is_preview:
+        carrier_name = next((f"{v['display']} ({v['scac']})" for v in carrier_options.values() if v["scac"]==active_scac), active_scac)
+        preview_badge(carrier_name)
+    else:
+        int_badge()
     st.title("Delivery Report")
     if role=="internal" and not is_preview:
         st.caption("Upload delivery data and view all carrier records.")
@@ -647,7 +661,7 @@ def page_delivery_report():
                         st.success(f"Done — {ins} new rows, {upd} updated.")
                     except Exception as e: st.error(f"Error: {e}")
     elif role=="carrier": st.caption(f"Showing records for **{st.session_state.display_name}** ({scac}).")
-    else: st.caption(f"Previewing records visible to **{view_labels[view_idx]}**.")
+    else: st.caption(f"Previewing records visible to **{carrier_name}**.")
     df = load_delivery_report(active_scac)
     if df.empty:
         df = MOCK_DELIVERY_DF.copy()
